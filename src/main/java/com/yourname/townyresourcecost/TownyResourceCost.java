@@ -5,21 +5,24 @@ import com.mojang.brigadier.tree.LiteralCommandNode;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
-import org.bukkit.ChatColor;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.Material;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.ConfigurationSection;
-import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 
-import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 public class TownyResourceCost extends JavaPlugin {
 
     private static TownyResourceCost instance;
-    private final List<ItemStack> requiredItems = new ArrayList<>();
+    private final Map<Material, Integer> requiredItems = new LinkedHashMap<>();
+    private final MiniMessage miniMessage = MiniMessage.miniMessage();
 
     @Override
     public void onEnable() {
@@ -40,30 +43,49 @@ public class TownyResourceCost extends JavaPlugin {
         return instance;
     }
 
-    /** Возвращает неизменяемый список, чтобы внешний код не мог мутировать требования. */
-    public List<ItemStack> getRequiredItems() {
-        return Collections.unmodifiableList(requiredItems);
+    /** Неизменяемая карта требований: материал -> количество. */
+    public Map<Material, Integer> getRequiredItems() {
+        return Collections.unmodifiableMap(requiredItems);
     }
 
     public void loadRequirements() {
         requiredItems.clear();
         ConfigurationSection costSection = getConfig().getConfigurationSection("cost");
         if (costSection == null) {
-            getLogger().warning("No 'cost' section found in config.yml");
+            getLogger().warning("Секция 'cost' не найдена в config.yml");
             return;
         }
         for (String key : costSection.getKeys(false)) {
+            Material material;
             try {
-                Material material = Material.valueOf(key.toUpperCase());
-                int amount = costSection.getInt(key);
-                if (amount > 0) {
-                    requiredItems.add(new ItemStack(material, amount));
-                }
+                material = Material.valueOf(key.toUpperCase(Locale.ROOT));
             } catch (IllegalArgumentException e) {
                 getLogger().warning("Неизвестный материал в config.yml: " + key);
+                continue;
             }
+            if (!material.isItem()) {
+                getLogger().warning("Материал " + key + " не является предметом, пропускаем.");
+                continue;
+            }
+            int amount = costSection.getInt(key);
+            if (amount <= 0) {
+                getLogger().warning("Некорректное количество для " + key + ": " + amount);
+                continue;
+            }
+            // Суммируем возможные дубликаты (разный регистр ключей и т.п.)
+            requiredItems.merge(material, amount, Integer::sum);
         }
-        getLogger().info("Loaded " + requiredItems.size() + " resource requirements.");
+        if (requiredItems.isEmpty()) {
+            getLogger().warning("Список требований пуст — стоимость создания города не будет взиматься.");
+        } else {
+            getLogger().info("Loaded " + requiredItems.size() + " resource requirements.");
+        }
+    }
+
+    /** Парсит строку в Component. null-safe. */
+    public Component parse(String miniMessageString) {
+        if (miniMessageString == null) return Component.empty();
+        return miniMessage.deserialize(miniMessageString);
     }
 
     /** Регистрация команды через Brigadier (современный способ Paper). */
@@ -78,15 +100,16 @@ public class TownyResourceCost extends JavaPlugin {
                                 CommandSender sender = ctx.getSource().getSender();
                                 reloadConfig();
                                 loadRequirements();
-                                sender.sendMessage(color(getConfig().getString("messages.reloaded",
-                                        "&aКонфигурация TownyResourceCost успешно перезагружена.")));
+                                sender.sendMessage(parse(getConfig().getString(
+                                        "messages.reloaded",
+                                        "<green>Конфигурация TownyResourceCost успешно перезагружена")));
                                 return Command.SINGLE_SUCCESS;
                             }))
-                    // если ввели без аргументов / или с неизвестным — подсказка
                     .executes(ctx -> {
                         CommandSender sender = ctx.getSource().getSender();
-                        sender.sendMessage(color(getConfig().getString("messages.unknown-subcommand",
-                                        "&eНеизвестная подкоманда. Используйте /%label% reload")
+                        sender.sendMessage(parse(getConfig().getString(
+                                        "messages.unknown-subcommand",
+                                        "<yellow>Неизвестная подкоманда. Используйте /%label% reload")
                                 .replace("%label%", "townyresourcecost")));
                         return Command.SINGLE_SUCCESS;
                     })
@@ -94,9 +117,5 @@ public class TownyResourceCost extends JavaPlugin {
 
             commands.register(root, "Reload TownyResourceCost configuration", List.of("trc"));
         });
-    }
-
-    private String color(String s) {
-        return ChatColor.translateAlternateColorCodes('&', s);
     }
 }
