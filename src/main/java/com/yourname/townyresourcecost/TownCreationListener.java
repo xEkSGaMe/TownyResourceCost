@@ -58,7 +58,6 @@ public class TownCreationListener implements Listener {
             player.sendMessage(plugin.parse(plugin.getConfig().getString(
                     "messages.creative-bypass",
                     "<green>Вы в креативе, ресурсы не списаны")));
-            // всё равно запоминаем игрока — эффекты и сундук должны сработать
             plugin.rememberTownCreator(event.getTownName(), player);
             return;
         }
@@ -79,7 +78,6 @@ public class TownCreationListener implements Listener {
             return;
         }
 
-        // Ресурсы есть — запоминаем игрока для NewTownEvent
         plugin.rememberTownCreator(event.getTownName(), player);
     }
 
@@ -91,7 +89,6 @@ public class TownCreationListener implements Listener {
         Town town = event.getTown();
         Player player = plugin.consumeTownCreator(town.getName());
 
-        // --- ресурсы ---
         if (player != null && !isBypassing(player)) {
             Map<Material, Integer> required = plugin.getRequiredItems();
             if (!required.isEmpty()) {
@@ -111,12 +108,10 @@ public class TownCreationListener implements Listener {
                     + town.getName() + "' — списание и эффекты пропущены.");
         }
 
-        // --- стартовый сундук ---
         if (plugin.getConfig().getBoolean("starting-chest.enabled", false)) {
             placeStartingChest(town);
         }
 
-        // --- эффекты ---
         if (player != null
                 && plugin.getConfig().getBoolean("effects.enabled", true)) {
             playEffects(player);
@@ -169,11 +164,6 @@ public class TownCreationListener implements Listener {
         }
     }
 
-    /**
-     * Ищет ближайшее к spawn место, куда можно поставить сундук.
-     *
-     * @param surface true — на поверхности (Y=highest+1), false — на Y спавна.
-     */
     private Location findChestLocation(Location spawn, int radius, boolean surface) {
         World world = spawn.getWorld();
         if (world == null) return null;
@@ -189,27 +179,69 @@ public class TownCreationListener implements Listener {
                     int x = cx + dx;
                     int z = cz + dz;
 
-                    int y;
-                    if (surface) {
-                        y = world.getHighestBlockYAt(x, z) + 1;
-                        if (y <= world.getMinHeight() || y >= world.getMaxHeight()) continue;
-                    } else {
-                        y = cy;
-                    }
+                    Location candidate = surface
+                            ? findSurfaceSpot(world, x, z)
+                            : new Location(world, x, cy, z);
 
-                    Location loc = new Location(world, x, y, z);
-                    if (isValidChestSpot(loc)) return loc;
+                    if (candidate != null && isValidChestSpot(candidate)) {
+                        return candidate;
+                    }
                 }
             }
         }
         return null;
     }
 
+    /**
+     * Возвращает координату над САМЫМ ВЕРХНИМ твёрдым блоком в колонке.
+     * Никогда не спускается ниже первого твёрдого блока — поэтому пещеры
+     * больше не подходят. Если над поверхностью что-то мешает (дерево,
+     * высокий куст и т.п.) — возвращает null, вызывающий код перейдёт
+     * к соседней колонке.
+     */
+    private Location findSurfaceSpot(World world, int x, int z) {
+        int maxY = world.getMaxHeight() - 1;
+        int minY = world.getMinHeight();
+
+        int surfaceY = Integer.MIN_VALUE;
+        for (int y = maxY; y > minY; y--) {
+            Material type = world.getBlockAt(x, y, z).getType();
+            if (type == Material.WATER || type == Material.LAVA) return null;
+            if (type.isSolid()) {
+                surfaceY = y;
+                break; // СТОП. Ниже не идём — там пещеры.
+            }
+        }
+        if (surfaceY == Integer.MIN_VALUE) return null;
+
+        Block above1 = world.getBlockAt(x, surfaceY + 1, z);
+        Block above2 = world.getBlockAt(x, surfaceY + 2, z);
+
+        if (!isReplaceable(above1.getType())) return null;
+        if (!isReplaceable(above2.getType())) return null;
+
+        // Убираем траву/цветы, чтобы сундук не торчал в кустах.
+        if (!above1.getType().isAir()) above1.setType(Material.AIR, false);
+        if (!above2.getType().isAir()) above2.setType(Material.AIR, false);
+
+        return above1.getLocation();
+    }
+
+    /** Можно ли поставить сундук вместо этого блока (воздух / трава / цветы / снег). */
+    private boolean isReplaceable(Material m) {
+        if (m.isAir()) return true;
+        if (m == Material.WATER || m == Material.LAVA) return false;
+        // всё, что не solid и не жидкость — трава, цветы, факелы, рельсы и т.п.
+        return !m.isSolid();
+    }
+
     private boolean isValidChestSpot(Location loc) {
         Block block = loc.getBlock();
-        if (block.getType() != Material.AIR) return false;
+        if (!isReplaceable(block.getType())) return false;
         Block below = block.getRelative(BlockFace.DOWN);
-        return below.getType().isSolid();
+        Material belowType = below.getType();
+        if (belowType == Material.WATER || belowType == Material.LAVA) return false;
+        return belowType.isSolid();
     }
 
     // ============================================================
@@ -218,7 +250,6 @@ public class TownCreationListener implements Listener {
     private void playEffects(Player player) {
         Location loc = player.getLocation();
 
-        // --- Sound ---
         if (plugin.getConfig().getBoolean("effects.sound.enabled", true)) {
             String name = plugin.getConfig().getString("effects.sound.name", "entity.player.levelup");
             float volume = (float) plugin.getConfig().getDouble("effects.sound.volume", 1.0);
@@ -230,7 +261,6 @@ public class TownCreationListener implements Listener {
             }
         }
 
-        // --- Particle ring ---
         if (plugin.getConfig().getBoolean("effects.particle.enabled", true)) {
             String typeName = plugin.getConfig().getString("effects.particle.type", "HAPPY_VILLAGER");
             int count = plugin.getConfig().getInt("effects.particle.count", 60);
@@ -251,7 +281,6 @@ public class TownCreationListener implements Listener {
             }
         }
 
-        // --- Fireworks ---
         if (plugin.getConfig().getBoolean("effects.firework.enabled", true)) {
             spawnFireworks(loc);
         }
@@ -358,10 +387,9 @@ public class TownCreationListener implements Listener {
             Material type = e.getKey();
             int needed = e.getValue();
             int has = have.getOrDefault(type, 0);
-            boolean enough = has >= needed;
-            String color = enough ? "<green>" : "<red>";
-            parts.add(color + needed + " × " + plugin.getMaterialName(type)
-                    + " <gray>(у вас: " + color + has + "<gray>)");
+            int deficit = Math.max(0, needed - has);
+            String color = deficit == 0 ? "<green>" : "<red>";
+            parts.add(color + deficit + " " + plugin.getMaterialName(type));
         }
         return String.join("<gray>, ", parts);
     }
