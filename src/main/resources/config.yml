@@ -1,0 +1,22 @@
+# Стоимость создания города в ресурсах.
+# Формат:
+#   cost:
+#     MATERIAL: количество
+#
+# ВАЖНО: в конфиге Towny денежная стоимость создания города
+# (economy.new_town_cost / price_newtown) должна быть выставлена в 0,
+# иначе игрок заплатит и деньги, и ресурсы.
+cost:
+  COBBLESTONE: 64
+  SPRUCE_PLANKS: 64
+  WHITE_WOOL: 8
+
+messages:
+  not-enough: "&cДля создания города вам нужно: &e%cost%"
+  success: "&aРесурсы за город списаны!"
+  only-players: "&cТолько игроки могут создавать города"
+  only-players: "&cТолько игроки могут создавать города"
+  creative-bypass: "&aВы в креативе, ресурсы не списаны"
+  reloaded: "&aКонфигурация TownyResourceCost успешно перезагружена"
+  no-permission: "&cУ вас нет прав на перезагрузку плагина"
+  unknown-subcommand: "&eНеизвестная подкоманда. Используйте /%label% reload"
